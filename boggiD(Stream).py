@@ -6,10 +6,10 @@ from plotly.subplots import make_subplots
 from datetime import datetime
 import re
 
-# ⭐️ config.py 대신 Streamlit 비밀 금고(secrets)에서 키값을 가져옵니다.
+# ⭐️ 수정 1: HOST_URL을 금고(secrets)에서 찾지 않고 직접 적어줍니다.
 app_key = st.secrets["APP_KEY"]
 app_secret = st.secrets["APP_SECRET"]
-host_url = st.secrets["HOST_URL"]
+host_url = "https://api.kiwoom.com" 
 
 # 1. 인증 및 데이터 수집 함수
 @st.cache_data(ttl=3600)
@@ -24,12 +24,7 @@ def get_broker_list(token):
     url = f"{host_url}/api/dostk/stkinfo"
     headers = {"Content-Type": "application/json;charset=UTF-8", "api-id": "ka10102", "authorization": f"Bearer {token}"}
     res = requests.post(url, headers=headers, json={})
-    data = res.json()
-    broker_dict = {}
-    if "list" in data:
-        for item in data["list"]: 
-            broker_dict[f"{item['name']}({item['code']})"] = item["code"]
-    return broker_dict
+    return res.json()
 
 def get_daily_chart(token, stock_code, target_date):
     url = f"{host_url}/api/dostk/chart"
@@ -59,8 +54,8 @@ investor_mapping = {
 # ----------------------------------------------------
 # 2. 메인 실행부
 # ----------------------------------------------------
-st.set_page_config(page_title="수급 마스터 (Web Ver.)", layout="wide")
-st.title("📊 주체별 수급 분석 대시보드")
+st.set_page_config(page_title="수급 마스터 v9.7", layout="wide")
+st.title("📊 주체별 수급 분석 (클라우드 완벽 패치)")
 
 auth_token = get_access_token()
 
@@ -71,19 +66,27 @@ with st.sidebar:
     target_date_str = selected_date.strftime('%Y%m%d')
     
     if auth_token:
-        broker_dict = get_broker_list(auth_token)
-        broker_names = sorted(list(broker_dict.keys()))
-        def_brk_idx = next((i for i, n in enumerate(broker_names) if "키움증권" in n), 0)
+        broker_data_raw = get_broker_list(auth_token)
+        broker_dict = {}
+        if "list" in broker_data_raw:
+            for item in broker_data_raw["list"]: 
+                broker_dict[f"{item['name']}({item['code']})"] = item["code"]
+        else:
+            st.error("🚨 창구 목록을 불러오지 못했습니다. 아래 메시지를 확인하세요.")
+            st.json(broker_data_raw)
+
+        broker_names = sorted(list(broker_dict.keys())) if broker_dict else ["데이터없음"]
+        def_brk_idx = next((i for i, n in enumerate(broker_names) if "키움증권" in n), 0) if broker_dict else 0
         selected_broker_name = st.selectbox("🔎 창구 선택 (3층)", broker_names, index=def_brk_idx)
-        target_broker_code = broker_dict[selected_broker_name]
+        target_broker_code = broker_dict.get(selected_broker_name, "")
         
         investor_names = sorted(list(investor_mapping.keys()))
         def_inv_idx = next((i for i, n in enumerate(investor_names) if "기관계" == n), 0)
         selected_investor_name = st.selectbox("🔎 투자자 선택 (4층)", investor_names, index=def_inv_idx)
         target_investor_field = investor_mapping[selected_investor_name]
 
-if auth_token and len(stock_number) == 6:
-    with st.spinner("데이터 동기화 및 전처리 중..."):
+if auth_token and len(stock_number) == 6 and target_broker_code:
+    with st.spinner("데이터 요청 중..."):
         daily_res = get_daily_chart(auth_token, stock_number, target_date_str)
         daily_list = daily_res.get('stk_dt_pole_chart_qry', [])
 
@@ -96,7 +99,8 @@ if auth_token and len(stock_number) == 6:
                 match = re.search(r'-?\d+', s)
                 return int(match.group()) if match else 0
 
-            df['key'] = df['dt'].astype(str).str.extract('(\d{8})')[0]
+            # ⭐️ 수정 2: 파이썬 최신 버전 문법에 맞게 r'(\d{8})' 로 변경하여 경고 메시지 제거
+            df['key'] = df['dt'].astype(str).str.extract(r'(\d{8})')[0]
             df = df.sort_values('key').tail(100).reset_index(drop=True)
             
             df['open'] = df['open_pric'].apply(clean_val)
@@ -119,7 +123,10 @@ if auth_token and len(stock_number) == 6:
             broker_items = broker_res.get('sec_stk_trde_trend', [])
             if broker_items:
                 df_b = pd.DataFrame(broker_items)
-                df_b['key'] = df_b['dt'].astype(str).str.extract('(\d{8})')[0]
+                
+                # ⭐️ 수정 2: 여기도 동일하게 r 추가
+                df_b['key'] = df_b['dt'].astype(str).str.extract(r'(\d{8})')[0]
+                
                 df_b['buy_n'] = df_b['buy_qty'].apply(clean_val)
                 df_b['sell_n'] = df_b['sell_qty'].apply(clean_val)
                 df_b['net_n'] = df_b['netprps_qty'].apply(clean_val)
@@ -171,3 +178,7 @@ if auth_token and len(stock_number) == 6:
             fig.update_layout(height=1100, template='plotly_white', barmode='relative', xaxis_rangeslider_visible=False, showlegend=False)
             
             st.plotly_chart(fig, use_container_width=True)
+        else:
+            # 일봉 데이터를 아예 못 받았을 때의 메시지 출력
+            st.error("🚨 서버에서 차트 데이터를 주지 않았습니다. 아래의 거절 사유를 확인해 주세요.")
+            st.json(daily_res)
