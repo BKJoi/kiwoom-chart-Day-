@@ -9,7 +9,7 @@ import re
 # ⭐️ 수정 1: HOST_URL을 금고(secrets)에서 찾지 않고 직접 적어줍니다.
 app_key = st.secrets["APP_KEY"]
 app_secret = st.secrets["APP_SECRET"]
-host_url = "https://api.kiwoom.com" 
+host_url = "https://mockapi.kiwoom.com"
 
 # 1. 인증 및 데이터 수집 함수
 @st.cache_data(ttl=3600)
