@@ -17,7 +17,8 @@ def get_access_token():
     url = f"{host_url}/oauth2/token"
     headers = {"Content-Type": "application/json;charset=UTF-8"}
     data = {"grant_type": "client_credentials", "appkey": app_key, "secretkey": app_secret}
-    return requests.post(url, headers=headers, json=data).json().get('token')
+    # ⭐️ .get('token')을 빼고 전체 결과를 가져옵니다.
+    return requests.post(url, headers=headers, json=data).json()
 
 @st.cache_data(ttl=86400) 
 def get_broker_list(token):
@@ -57,7 +58,14 @@ investor_mapping = {
 st.set_page_config(page_title="수급 마스터 v9.7", layout="wide")
 st.title("📊 주체별 수급 분석 (클라우드 완벽 패치)")
 
-auth_token = get_access_token()
+# ⭐️ 토큰 발급 결과를 뜯어보고, 실패하면 에러를 띄웁니다.
+token_response = get_access_token()
+auth_token = token_response.get('token')
+
+if not auth_token:
+    st.error("🚨 키움증권에서 접속(토큰 발급)을 거절했습니다! 아래 사유를 확인해주세요.")
+    st.json(token_response) # 여기에 거절 사유가 뜹니다!
+
 
 with st.sidebar:
     st.header("⚙️ 설정")
