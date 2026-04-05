@@ -8,7 +8,7 @@ import re
 import numpy as np
 
 # 1. URL은 숨길 필요가 없으므로 직접 입력 (모의투자 또는 실투자 URL)
-host_url = "https://api.kiwoom.com" # 또는 모의투자 URL
+host_url = "https://mockapi.kiwoom.com" # 또는 모의투자 URL
 
 # 2. 내 진짜 키값은 Streamlit의 안전한 금고(secrets)에서 불러오기!
 app_key = st.secrets["APP_KEY"]
