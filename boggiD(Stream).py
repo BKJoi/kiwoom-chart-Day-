@@ -8,43 +8,47 @@ import re
 import numpy as np
 
 # ----------------------------------------------------
-# 💡 [핵심 해결 1] URL을 반드시 '실전투자(api)'로 변경해야 수급 데이터가 나옵니다!
+# 💡 [핵심 해결 1] 마스터키 주소 (포트 8080)
 # ----------------------------------------------------
-HOST_URL = "https://openapi.kiwoom.com:8080"
+host_url = "https://openapi.kiwoom.com:8080" 
 
 # 2. 내 진짜 키값은 Streamlit의 안전한 금고(secrets)에서 불러오기!
 app_key = st.secrets["APP_KEY"]
 app_secret = st.secrets["APP_SECRET"]
 
 # ----------------------------------------------------
-# 1. 인증 및 데이터 수집 함수 (User-Agent 위장 추가)
+# 1. 인증 및 데이터 수집 함수 
 # ----------------------------------------------------
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=3000)
 def get_access_token():
-    url = f"{host_url}/oauth2/token"
+    # 💡 [핵심 해결 2] 8080 포트는 token 이 아니라 tokenP 를 사용합니다!
+    url = f"{host_url}/oauth2/tokenP"
     
     headers = {
         "Content-Type": "application/json;charset=UTF-8",
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
-    data = {"grant_type": "client_credentials", "appkey": app_key, "secretkey": app_secret}
+    # 💡 secretkey 가 아니라 appsecret 으로 요청해야 합니다!
+    data = {
+        "grant_type": "client_credentials", 
+        "appkey": app_key, 
+        "appsecret": app_secret
+    }
     
     response = requests.post(url, headers=headers, json=data)
     
-    try:
-        res_json = response.json()
-        return res_json.get('token')
-    except requests.exceptions.JSONDecodeError:
-        st.error("🚨 키움증권 방화벽 차단 (Request Blocked)")
-        st.warning(f"상태 코드 (Status Code): {response.status_code}")
-        st.info(f"실제 응답: {response.text}")
-        st.stop()
+    if response.status_code != 200:
+        return None # 실패 시 None 반환
+        
+    res_json = response.json()
+    # 💡 응답 키도 token 이 아니라 access_token 입니다!
+    return res_json.get('access_token')
 
 @st.cache_data(ttl=86400) 
 def get_broker_list(token):
     url = f"{host_url}/api/dostk/stkinfo"
     headers = {"Content-Type": "application/json;charset=UTF-8", "api-id": "ka10102", "authorization": f"Bearer {token}"}
-    res = requests.post(url, headers=headers, json={})
+    res = requests.post(url, headers=headers, json={}, timeout=10)
     data = res.json()
     broker_dict = {}
     if "list" in data:
@@ -89,29 +93,35 @@ with st.sidebar:
     st.header("⚙️ 설정")
     stock_number = st.text_input("종목코드", value="005930")
     
-    # 💡 주말에 조회하면 데이터가 안 나올 수 있으므로, 평일 날짜를 선택하도록 안내
     st.caption("※ 주말/휴일 선택 시 데이터가 누락될 수 있습니다.")
     selected_date = st.date_input("기준 날짜", datetime.now())
     target_date_str = selected_date.strftime('%Y%m%d')
     
+    # 💡 토큰 발급 실패 시 사이드바에 오류 표시
+    if not auth_token:
+        st.error("🚨 키움증권 토큰 발급에 실패했습니다. API 키를 확인해주세요.")
+    
     if auth_token:
         broker_dict = get_broker_list(auth_token)
-        broker_names = sorted(list(broker_dict.keys()))
-        
-        def_brk1_idx = next((i for i, n in enumerate(broker_names) if "키움증권" in n), 0)
-        selected_broker1_name = st.selectbox("🔎 창구 1 선택", broker_names, index=def_brk1_idx)
-        target_broker1_code = broker_dict[selected_broker1_name]
-        
-        def_brk2_idx = next((i for i, n in enumerate(broker_names) if "신한투자증권" in n), 0)
-        selected_broker2_name = st.selectbox("🔎 창구 2 선택 (타겟 주포)", broker_names, index=def_brk2_idx)
-        target_broker2_code = broker_dict[selected_broker2_name]
-        
-        investor_names = sorted(list(investor_mapping.keys()))
-        def_inv_idx = next((i for i, n in enumerate(investor_names) if "기관계" == n), 0)
-        selected_investor_name = st.selectbox("🔎 투자자 선택 (비교용)", investor_names, index=def_inv_idx)
-        target_investor_field = investor_mapping[selected_investor_name]
-        
-        corr_window = st.number_input("⏱️ 롤링 분석 기간 (일)", min_value=3, max_value=60, value=20)
+        if not broker_dict:
+            st.error("🚨 창구 목록을 불러오지 못했습니다.")
+        else:
+            broker_names = sorted(list(broker_dict.keys()))
+            
+            def_brk1_idx = next((i for i, n in enumerate(broker_names) if "키움증권" in n), 0)
+            selected_broker1_name = st.selectbox("🔎 창구 1 선택", broker_names, index=def_brk1_idx)
+            target_broker1_code = broker_dict[selected_broker1_name]
+            
+            def_brk2_idx = next((i for i, n in enumerate(broker_names) if "신한투자증권" in n), 0)
+            selected_broker2_name = st.selectbox("🔎 창구 2 선택 (타겟 주포)", broker_names, index=def_brk2_idx)
+            target_broker2_code = broker_dict[selected_broker2_name]
+            
+            investor_names = sorted(list(investor_mapping.keys()))
+            def_inv_idx = next((i for i, n in enumerate(investor_names) if "기관계" == n), 0)
+            selected_investor_name = st.selectbox("🔎 투자자 선택 (비교용)", investor_names, index=def_inv_idx)
+            target_investor_field = investor_mapping[selected_investor_name]
+            
+            corr_window = st.number_input("⏱️ 롤링 분석 기간 (일)", min_value=3, max_value=60, value=20)
 
 if auth_token and len(stock_number) == 6:
     with st.spinner("데이터 동기화 및 차트 생성 중..."):
@@ -170,10 +180,9 @@ if auth_token and len(stock_number) == 6:
             buy_list = res_buy.get('stk_invsr_orgn', [])
             sell_list = res_sell.get('stk_invsr_orgn', [])
             
-            # 💡 [핵심 해결 2] 데이터가 안 올 경우 원인을 파악할 수 있도록 경고 메시지 출력
             if not buy_list:
                 st.warning(f"⚠️ 5층(투자자 수급) 데이터를 키움 서버에서 주지 않았습니다! (서버 메시지: {res_buy.get('return_msg', '데이터 없음')})")
-                st.info("해결 방법: 주말/휴일 대신 평일(예: 금요일) 날짜를 사이드바에서 선택해 보세요.")
+                st.info("해결 방법: 주말/휴일 대신 평일 날짜를 사이드바에서 선택해 보세요.")
 
             df['Inv_Buy'] = 0; df['Inv_Sell'] = 0; df['Inv_Net'] = 0
             df['Ind_Buy'] = 0; df['Ind_Sell'] = 0; df['Ind_Net'] = 0
@@ -199,9 +208,6 @@ if auth_token and len(stock_number) == 6:
             df['Inv_Cum'] = df['Inv_Net'].cumsum()
             df['Inv_Total_Vol'] = df['Inv_Buy'] + df['Inv_Sell']
 
-            # -------------------------------------------------------
-            # ⭐️ 극단값(Outlier) 제한 (Clipping)
-            # -------------------------------------------------------
             clip_limit = 50 
             
             df['Brk2_Intensity'] = ((df['Brk2_Net'] / df['Brk2_Total_Vol'].replace(0, np.nan)).fillna(0) * 100).clip(lower=-clip_limit, upper=clip_limit)
@@ -213,9 +219,6 @@ if auth_token and len(stock_number) == 6:
             df = df.tail(100).reset_index(drop=True)
             x_labels = df['key'].apply(lambda x: f"{x[2:4]}/{x[4:6]}/{x[6:]}")
 
-            # -------------------------------------------------------
-            # ⭐️ 9단 분할 차트 생성 
-            # -------------------------------------------------------
             fig = make_subplots(
                 rows=9, cols=1, shared_xaxes=True, vertical_spacing=0.03, 
                 row_heights=[0.14, 0.06, 0.08, 0.08, 0.08, 0.08, 0.08, 0.2, 0.2], 
@@ -256,7 +259,6 @@ if auth_token and len(stock_number) == 6:
             fig.add_trace(go.Bar(x=x_labels, y=df['Corr_Inv'], marker_color=['#ff4d4d' if c > 0 else '#0066ff' for c in df['Corr_Inv']], opacity=0.8), row=6, col=1)
             fig.add_trace(go.Bar(x=x_labels, y=df['Corr_Brk'], marker_color=['#ff4d4d' if c > 0 else '#0066ff' for c in df['Corr_Brk']], opacity=0.8), row=7, col=1)
 
-            # 8층 (창구2 매매강도 - 꺾은선 + 영역)
             fig.add_trace(go.Scatter(
                 x=x_labels, y=df['Brk2_Intensity'], 
                 mode='lines+markers', line=dict(color='#ff9933', width=2), marker=dict(size=4), 
@@ -264,7 +266,6 @@ if auth_token and len(stock_number) == 6:
             ), row=8, col=1)
             fig.add_hline(y=0, line_dash="solid", line_color="black", opacity=0.5, row=8, col=1)
 
-            # 9층 (투자자 매매강도 - 꺾은선 + 영역)
             fig.add_trace(go.Scatter(
                 x=x_labels, y=df['Inv_Intensity'], 
                 mode='lines+markers', line=dict(color='#00cc66', width=2), marker=dict(size=4), 
@@ -275,13 +276,12 @@ if auth_token and len(stock_number) == 6:
             fig.update_yaxes(range=[-clip_limit-5, clip_limit+5], row=8, col=1)
             fig.update_yaxes(range=[-clip_limit-5, clip_limit+5], row=9, col=1)
 
-# ... (기존 코드) ...
+            fig.update_xaxes(type='category', tickangle=-45, nticks=20, showgrid=True)
             fig.update_layout(height=2600, template='plotly_white', barmode='relative', xaxis_rangeslider_visible=False, showlegend=False)
             
             st.plotly_chart(fig, use_container_width=True)
             
-        # 💡 [여기서부터 새로 추가] 들여쓰기를 if daily_list: 와 맞추세요!
         else:
             st.error("⚠️ 키움증권 서버에서 차트 데이터를 주지 않았습니다.")
             st.info(f"서버가 보낸 실제 메시지: {daily_res.get('return_msg', '메시지 없음')}")
-            st.warning("조치 방법: 1. 주말 대신 평일 날짜 선택 / 2. 실전투자 서버(api.kiwoom.com) 사용")
+            st.warning("조치 방법: 평일 날짜를 선택하시거나 종목코드를 다시 확인해 주세요.")
