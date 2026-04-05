@@ -8,53 +8,40 @@ import re
 import numpy as np
 
 # ----------------------------------------------------
-# 💡 [핵심 완벽 해결] 매표소(토큰)와 데이터 창고 주소를 분리!
+# 💡 [원상 복구] 클라우드에서 접속 가능한 모의투자 주소 사용!
 # ----------------------------------------------------
-TOKEN_URL = "https://openapi.kiwoom.com:8080" # 토큰 전용 포트
-DATA_URL = "https://openapi.kiwoom.com:8443"  # OpenAPI 차트/수급 데이터 전용 포트
+host_url = "https://mockapi.kiwoom.com" 
 
 app_key = st.secrets["APP_KEY"]
 app_secret = st.secrets["APP_SECRET"]
 
 # ----------------------------------------------------
-# 1. 인증 및 데이터 수집 함수 
+# 1. 인증 및 데이터 수집 함수 (모의투자용으로 복구)
 # ----------------------------------------------------
 @st.cache_data(ttl=3000)
 def get_access_token():
-    url = f"{TOKEN_URL}/oauth2/tokenP"
-    body = {
+    url = f"{host_url}/oauth2/token"
+    
+    headers = {"Content-Type": "application/json;charset=UTF-8"}
+    data = {
         "grant_type": "client_credentials", 
         "appkey": app_key, 
-        "appsecret": app_secret
+        "secretkey": app_secret  # 모의투자는 secretkey 사용
     }
     
-    try:
-        # 💡 미국 서버 통신망을 고려해 대기 시간을 15초로 넉넉하게 늘렸습니다.
-        response = requests.post(url, json=body, timeout=15)
+    response = requests.post(url, headers=headers, json=data)
+    
+    if response.status_code != 200:
+        st.error(f"🚨 토큰 발급 실패! 상태 코드: {response.status_code}")
+        return None
         
-        if response.status_code != 200:
-            st.error(f"🚨 토큰 서버 거절! 상태 코드: {response.status_code}")
-            return None
-            
-        data = response.json()
-        if "access_token" in data:
-            return data["access_token"]
-        else:
-            st.error(f"🚨 토큰 발급 실패 (데이터 이상): {data}")
-            return None
-            
-    except requests.exceptions.Timeout:
-        st.error("🚨 15초 초과! 토큰 서버(8080포트) 응답 지연 (Timeout)")
-        return None
-    except Exception as e:
-        st.error(f"🚨 서버 접속 오류: {e}")
-        return None
+    return response.json().get('token')
 
 @st.cache_data(ttl=86400) 
 def get_broker_list(token):
-    url = f"{DATA_URL}/api/dostk/stkinfo" # 💡 데이터 창고(DATA_URL)로 요청!
+    url = f"{host_url}/api/dostk/stkinfo"
     headers = {"Content-Type": "application/json;charset=UTF-8", "api-id": "ka10102", "authorization": f"Bearer {token}"}
-    res = requests.post(url, headers=headers, json={}, timeout=15)
+    res = requests.post(url, headers=headers, json={}, timeout=10)
     data = res.json()
     broker_dict = {}
     if "list" in data:
@@ -63,22 +50,22 @@ def get_broker_list(token):
     return broker_dict
 
 def get_daily_chart(token, stock_code, target_date):
-    url = f"{DATA_URL}/api/dostk/chart"
+    url = f"{host_url}/api/dostk/chart"
     headers = {"Content-Type": "application/json;charset=UTF-8", "api-id": "ka10081", "authorization": f"Bearer {token}"}
     data = {"stk_cd": stock_code, "qry_tp": "1", "upd_stkpc_tp": "1", "base_dt": target_date}
-    return requests.post(url, headers=headers, json=data, timeout=15).json()
+    return requests.post(url, headers=headers, json=data, timeout=10).json()
 
 def get_daily_broker_data(token, stock_code, start_dt, end_dt, broker_code):
-    url = f"{DATA_URL}/api/dostk/mrkcond"
+    url = f"{host_url}/api/dostk/mrkcond"
     headers = {"Content-Type": "application/json;charset=UTF-8", "api-id": "ka10078", "authorization": f"Bearer {token}"}
     data = {"mmcm_cd": broker_code, "stk_cd": stock_code, "strt_dt": start_dt, "end_dt": end_dt} 
-    return requests.post(url, headers=headers, json=data, timeout=15).json()
+    return requests.post(url, headers=headers, json=data, timeout=10).json()
 
 def get_investor_data_ka10059(token, stock_code, target_date, trde_tp):
-    url = f"{DATA_URL}/api/dostk/stkinfo"
+    url = f"{host_url}/api/dostk/stkinfo"
     headers = {"Content-Type": "application/json;charset=UTF-8", "api-id": "ka10059", "authorization": f"Bearer {token}"}
     data = {"dt": target_date, "stk_cd": stock_code, "amt_qty_tp": "2", "trde_tp": trde_tp, "unit_tp": "1"}
-    return requests.post(url, headers=headers, json=data, timeout=15).json()
+    return requests.post(url, headers=headers, json=data, timeout=10).json()
 
 investor_mapping = {
     "개인투자자": "ind_invsr", "기관계": "orgn", "외국인투자자": "frgnr_invsr",
@@ -98,37 +85,29 @@ auth_token = get_access_token()
 with st.sidebar:
     st.header("⚙️ 설정")
     stock_number = st.text_input("종목코드", value="005930")
-    
-    st.caption("※ 주말/휴일 선택 시 데이터가 누락될 수 있습니다.")
     selected_date = st.date_input("기준 날짜", datetime.now())
     target_date_str = selected_date.strftime('%Y%m%d')
     
-    if not auth_token:
-        st.warning("⏳ 토큰을 불러오는 중이거나 통신에 실패했습니다.")
-    
     if auth_token:
         broker_dict = get_broker_list(auth_token)
-        if not broker_dict:
-            st.error("🚨 창구 목록을 불러오지 못했습니다. (8443 포트 응답 없음)")
-        else:
-            broker_names = sorted(list(broker_dict.keys()))
-            
-            def_brk1_idx = next((i for i, n in enumerate(broker_names) if "키움증권" in n), 0)
-            selected_broker1_name = st.selectbox("🔎 창구 1 선택", broker_names, index=def_brk1_idx)
-            target_broker1_code = broker_dict[selected_broker1_name]
-            
-            def_brk2_idx = next((i for i, n in enumerate(broker_names) if "신한투자증권" in n), 0)
-            selected_broker2_name = st.selectbox("🔎 창구 2 선택 (타겟 주포)", broker_names, index=def_brk2_idx)
-            target_broker2_code = broker_dict[selected_broker2_name]
-            
-            investor_names = sorted(list(investor_mapping.keys()))
-            def_inv_idx = next((i for i, n in enumerate(investor_names) if "기관계" == n), 0)
-            selected_investor_name = st.selectbox("🔎 투자자 선택 (비교용)", investor_names, index=def_inv_idx)
-            target_investor_field = investor_mapping[selected_investor_name]
-            
-            corr_window = st.number_input("⏱️ 롤링 분석 기간 (일)", min_value=3, max_value=60, value=20)
+        broker_names = sorted(list(broker_dict.keys()))
+        
+        def_brk1_idx = next((i for i, n in enumerate(broker_names) if "키움증권" in n), 0)
+        selected_broker1_name = st.selectbox("🔎 창구 1 선택", broker_names, index=def_brk1_idx)
+        target_broker1_code = broker_dict[selected_broker1_name]
+        
+        def_brk2_idx = next((i for i, n in enumerate(broker_names) if "신한투자증권" in n), 0)
+        selected_broker2_name = st.selectbox("🔎 창구 2 선택 (타겟 주포)", broker_names, index=def_brk2_idx)
+        target_broker2_code = broker_dict[selected_broker2_name]
+        
+        investor_names = sorted(list(investor_mapping.keys()))
+        def_inv_idx = next((i for i, n in enumerate(investor_names) if "기관계" == n), 0)
+        selected_investor_name = st.selectbox("🔎 투자자 선택 (비교용)", investor_names, index=def_inv_idx)
+        target_investor_field = investor_mapping[selected_investor_name]
+        
+        corr_window = st.number_input("⏱️ 롤링 분석 기간 (일)", min_value=3, max_value=60, value=20)
 
-if auth_token and len(stock_number) == 6 and 'target_broker1_code' in locals():
+if auth_token and len(stock_number) == 6:
     with st.spinner("데이터 동기화 및 차트 생성 중..."):
         daily_res = get_daily_chart(auth_token, stock_number, target_date_str)
         daily_list = daily_res.get('stk_dt_pole_chart_qry', [])
@@ -156,6 +135,8 @@ if auth_token and len(stock_number) == 6 and 'target_broker1_code' in locals():
 
             brk1_res = get_daily_broker_data(auth_token, stock_number, df['key'].min(), df['key'].max(), target_broker1_code)
             brk2_res = get_daily_broker_data(auth_token, stock_number, df['key'].min(), df['key'].max(), target_broker2_code)
+            
+            # 투자자 데이터 수집
             res_buy = get_investor_data_ka10059(auth_token, stock_number, target_date_str, "1")
             res_sell = get_investor_data_ka10059(auth_token, stock_number, target_date_str, "2")
             
@@ -185,9 +166,7 @@ if auth_token and len(stock_number) == 6 and 'target_broker1_code' in locals():
             buy_list = res_buy.get('stk_invsr_orgn', [])
             sell_list = res_sell.get('stk_invsr_orgn', [])
             
-            if not buy_list:
-                st.warning(f"⚠️ 5층(투자자 수급) 데이터를 키움 서버에서 주지 않았습니다! (서버 메시지: {res_buy.get('return_msg', '데이터 없음')})")
-
+            # 💡 [핵심] 모의투자라서 데이터가 비어있어도 에러 없이 넘어가게 0으로 채움
             df['Inv_Buy'] = 0; df['Inv_Sell'] = 0; df['Inv_Net'] = 0
             df['Ind_Buy'] = 0; df['Ind_Sell'] = 0; df['Ind_Net'] = 0
             
@@ -228,11 +207,11 @@ if auth_token and len(stock_number) == 6 and 'target_broker1_code' in locals():
                 row_heights=[0.14, 0.06, 0.08, 0.08, 0.08, 0.08, 0.08, 0.2, 0.2], 
                 subplot_titles=(
                     "1. 가격 및 이동평균선", "2. 전체 거래량", 
-                    f"3. [{selected_broker1_name}] 수급 활동", f"4. [{selected_broker2_name}] 수급 활동", f"5. [{selected_investor_name}] 수급 활동", 
+                    f"3. [{selected_broker1_name}] 수급 활동", f"4. [{selected_broker2_name}] 수급 활동", f"5. [{selected_investor_name}] 수급 활동 (모의투자는 미제공)", 
                     f"🔗 6. [개인투자자] - [{selected_investor_name}] 매매 상관성",
                     f"🔗 7. [{selected_broker1_name}] - [{selected_broker2_name}] 매매 상관성",
                     f"🔥 8. [{selected_broker2_name}] 순매수 강도 (%) - (극단값 ±{clip_limit}% 커트)",
-                    f"🔥 9. [{selected_investor_name}] 순매수 강도 (%) - (극단값 ±{clip_limit}% 커트)"
+                    f"🔥 9. [{selected_investor_name}] 순매수 강도 (%)"
                 ),
                 specs=[[{"secondary_y": False}], [{"secondary_y": False}], 
                        [{"secondary_y": True}], [{"secondary_y": True}], [{"secondary_y": True}], 
@@ -286,5 +265,4 @@ if auth_token and len(stock_number) == 6 and 'target_broker1_code' in locals():
             st.plotly_chart(fig, use_container_width=True)
             
         else:
-            st.error("⚠️ 키움증권 서버에서 차트 데이터를 주지 않았습니다.")
-            st.info(f"서버가 보낸 메시지: {daily_res.get('return_msg', '메시지 없음')}")
+            st.warning("⚠️ 선택하신 평일 날짜의 차트 데이터가 존재하지 않습니다.")
