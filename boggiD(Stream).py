@@ -26,7 +26,19 @@ def get_access_token():
     url = f"{host_url}/oauth2/token"
     headers = {"Content-Type": "application/json;charset=UTF-8"}
     data = {"grant_type": "client_credentials", "appkey": app_key, "secretkey": app_secret}
-    return requests.post(url, headers=headers, json=data).json().get('token')
+    
+    response = requests.post(url, headers=headers, json=data)
+    
+    try:
+        # 정상적으로 JSON 응답이 왔을 경우
+        res_json = response.json()
+        return res_json.get('token')
+    except requests.exceptions.JSONDecodeError:
+        # JSON이 아닌 에러 메세지가 왔을 경우 화면에 원인 출력
+        st.error("🚨 키움증권 서버 인증에 실패했습니다! (JSONDecodeError)")
+        st.warning(f"상태 코드 (Status Code): {response.status_code}")
+        st.info(f"키움 서버의 실제 응답 메세지: {response.text}")
+        st.stop() # 화면 실행을 여기서 멈춥니다.
 
 @st.cache_data(ttl=86400) 
 def get_broker_list(token):
