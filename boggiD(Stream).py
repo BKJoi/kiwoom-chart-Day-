@@ -275,7 +275,13 @@ if auth_token and len(stock_number) == 6:
             fig.update_yaxes(range=[-clip_limit-5, clip_limit+5], row=8, col=1)
             fig.update_yaxes(range=[-clip_limit-5, clip_limit+5], row=9, col=1)
 
-            fig.update_xaxes(type='category', tickangle=-45, nticks=20, showgrid=True)
+# ... (기존 코드) ...
             fig.update_layout(height=2600, template='plotly_white', barmode='relative', xaxis_rangeslider_visible=False, showlegend=False)
             
             st.plotly_chart(fig, use_container_width=True)
+            
+        # 💡 [여기서부터 새로 추가] 들여쓰기를 if daily_list: 와 맞추세요!
+        else:
+            st.error("⚠️ 키움증권 서버에서 차트 데이터를 주지 않았습니다.")
+            st.info(f"서버가 보낸 실제 메시지: {daily_res.get('return_msg', '메시지 없음')}")
+            st.warning("조치 방법: 1. 주말 대신 평일 날짜 선택 / 2. 실전투자 서버(api.kiwoom.com) 사용")
