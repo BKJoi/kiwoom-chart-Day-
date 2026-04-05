@@ -8,11 +8,11 @@ import re
 import numpy as np
 
 # ----------------------------------------------------
-# 💡 [핵심 해결 1] 마스터키 주소 (포트 8080)
+# 💡 [핵심 완벽 해결] 매표소(토큰)와 데이터 창고 주소를 분리!
 # ----------------------------------------------------
-host_url = "https://openapi.kiwoom.com:8080" 
+TOKEN_URL = "https://openapi.kiwoom.com:8080" # 토큰 전용 포트
+DATA_URL = "https://openapi.kiwoom.com:8443"  # OpenAPI 차트/수급 데이터 전용 포트
 
-# 2. 내 진짜 키값은 Streamlit의 안전한 금고(secrets)에서 불러오기!
 app_key = st.secrets["APP_KEY"]
 app_secret = st.secrets["APP_SECRET"]
 
@@ -21,9 +21,7 @@ app_secret = st.secrets["APP_SECRET"]
 # ----------------------------------------------------
 @st.cache_data(ttl=3000)
 def get_access_token():
-    url = f"{host_url}/oauth2/tokenP"
-    
-    # 💡 [핵심 해결] 위장 헤더 싹 다 지우고, 사용자님 성공 코드와 똑같이 심플하게!
+    url = f"{TOKEN_URL}/oauth2/tokenP"
     body = {
         "grant_type": "client_credentials", 
         "appkey": app_key, 
@@ -31,8 +29,8 @@ def get_access_token():
     }
     
     try:
-        # 💡 timeout=5 설정: 5초 안에 키움이 대답 안 하면 무한로딩 안 하고 바로 에러 뱉음!
-        response = requests.post(url, json=body, timeout=5)
+        # 💡 미국 서버 통신망을 고려해 대기 시간을 15초로 넉넉하게 늘렸습니다.
+        response = requests.post(url, json=body, timeout=15)
         
         if response.status_code != 200:
             st.error(f"🚨 토큰 서버 거절! 상태 코드: {response.status_code}")
@@ -46,17 +44,17 @@ def get_access_token():
             return None
             
     except requests.exceptions.Timeout:
-        st.error("🚨 5초 초과! 키움 서버(8080포트)가 응답을 주지 않고 무시했습니다. (Timeout)")
+        st.error("🚨 15초 초과! 토큰 서버(8080포트) 응답 지연 (Timeout)")
         return None
     except Exception as e:
-        st.error(f"🚨 서버 접속 중 오류 발생: {e}")
+        st.error(f"🚨 서버 접속 오류: {e}")
         return None
-        
+
 @st.cache_data(ttl=86400) 
 def get_broker_list(token):
-    url = f"{host_url}/api/dostk/stkinfo"
+    url = f"{DATA_URL}/api/dostk/stkinfo" # 💡 데이터 창고(DATA_URL)로 요청!
     headers = {"Content-Type": "application/json;charset=UTF-8", "api-id": "ka10102", "authorization": f"Bearer {token}"}
-    res = requests.post(url, headers=headers, json={}, timeout=10)
+    res = requests.post(url, headers=headers, json={}, timeout=15)
     data = res.json()
     broker_dict = {}
     if "list" in data:
@@ -65,22 +63,22 @@ def get_broker_list(token):
     return broker_dict
 
 def get_daily_chart(token, stock_code, target_date):
-    url = f"{host_url}/api/dostk/chart"
+    url = f"{DATA_URL}/api/dostk/chart"
     headers = {"Content-Type": "application/json;charset=UTF-8", "api-id": "ka10081", "authorization": f"Bearer {token}"}
     data = {"stk_cd": stock_code, "qry_tp": "1", "upd_stkpc_tp": "1", "base_dt": target_date}
-    return requests.post(url, headers=headers, json=data, timeout=10).json()
+    return requests.post(url, headers=headers, json=data, timeout=15).json()
 
 def get_daily_broker_data(token, stock_code, start_dt, end_dt, broker_code):
-    url = f"{host_url}/api/dostk/mrkcond"
+    url = f"{DATA_URL}/api/dostk/mrkcond"
     headers = {"Content-Type": "application/json;charset=UTF-8", "api-id": "ka10078", "authorization": f"Bearer {token}"}
     data = {"mmcm_cd": broker_code, "stk_cd": stock_code, "strt_dt": start_dt, "end_dt": end_dt} 
-    return requests.post(url, headers=headers, json=data, timeout=10).json()
+    return requests.post(url, headers=headers, json=data, timeout=15).json()
 
 def get_investor_data_ka10059(token, stock_code, target_date, trde_tp):
-    url = f"{host_url}/api/dostk/stkinfo"
+    url = f"{DATA_URL}/api/dostk/stkinfo"
     headers = {"Content-Type": "application/json;charset=UTF-8", "api-id": "ka10059", "authorization": f"Bearer {token}"}
     data = {"dt": target_date, "stk_cd": stock_code, "amt_qty_tp": "2", "trde_tp": trde_tp, "unit_tp": "1"}
-    return requests.post(url, headers=headers, json=data, timeout=10).json()
+    return requests.post(url, headers=headers, json=data, timeout=15).json()
 
 investor_mapping = {
     "개인투자자": "ind_invsr", "기관계": "orgn", "외국인투자자": "frgnr_invsr",
@@ -105,14 +103,13 @@ with st.sidebar:
     selected_date = st.date_input("기준 날짜", datetime.now())
     target_date_str = selected_date.strftime('%Y%m%d')
     
-    # 💡 토큰 발급 실패 시 사이드바에 오류 표시
     if not auth_token:
-        st.error("🚨 키움증권 토큰 발급에 실패했습니다. API 키를 확인해주세요.")
+        st.warning("⏳ 토큰을 불러오는 중이거나 통신에 실패했습니다.")
     
     if auth_token:
         broker_dict = get_broker_list(auth_token)
         if not broker_dict:
-            st.error("🚨 창구 목록을 불러오지 못했습니다.")
+            st.error("🚨 창구 목록을 불러오지 못했습니다. (8443 포트 응답 없음)")
         else:
             broker_names = sorted(list(broker_dict.keys()))
             
@@ -131,7 +128,7 @@ with st.sidebar:
             
             corr_window = st.number_input("⏱️ 롤링 분석 기간 (일)", min_value=3, max_value=60, value=20)
 
-if auth_token and len(stock_number) == 6:
+if auth_token and len(stock_number) == 6 and 'target_broker1_code' in locals():
     with st.spinner("데이터 동기화 및 차트 생성 중..."):
         daily_res = get_daily_chart(auth_token, stock_number, target_date_str)
         daily_list = daily_res.get('stk_dt_pole_chart_qry', [])
@@ -190,7 +187,6 @@ if auth_token and len(stock_number) == 6:
             
             if not buy_list:
                 st.warning(f"⚠️ 5층(투자자 수급) 데이터를 키움 서버에서 주지 않았습니다! (서버 메시지: {res_buy.get('return_msg', '데이터 없음')})")
-                st.info("해결 방법: 주말/휴일 대신 평일 날짜를 사이드바에서 선택해 보세요.")
 
             df['Inv_Buy'] = 0; df['Inv_Sell'] = 0; df['Inv_Net'] = 0
             df['Ind_Buy'] = 0; df['Ind_Sell'] = 0; df['Ind_Net'] = 0
@@ -291,5 +287,4 @@ if auth_token and len(stock_number) == 6:
             
         else:
             st.error("⚠️ 키움증권 서버에서 차트 데이터를 주지 않았습니다.")
-            st.info(f"서버가 보낸 실제 메시지: {daily_res.get('return_msg', '메시지 없음')}")
-            st.warning("조치 방법: 평일 날짜를 선택하시거나 종목코드를 다시 확인해 주세요.")
+            st.info(f"서버가 보낸 메시지: {daily_res.get('return_msg', '메시지 없음')}")
