@@ -7,16 +7,12 @@ from datetime import datetime
 import re
 import numpy as np
 
-# ----------------------------------------------------
-# 🔒 보안 키 설정 (Streamlit Secrets 활용)
-# ----------------------------------------------------
-try:
-    app_key = st.secrets["APP_KEY"]
-    app_secret = st.secrets["APP_SECRET"]
-    host_url = st.secrets["HOST_URL"]
-except KeyError:
-    st.error("⚠️ Streamlit Cloud의 [Secrets] 설정이 누락되었습니다. APP_KEY, APP_SECRET, HOST_URL을 입력해주세요.")
-    st.stop()
+# 1. URL은 숨길 필요가 없으므로 직접 입력 (모의투자 또는 실투자 URL)
+host_url = "https://mockapi.kiwoom.com" # 또는 모의투자 URL
+
+# 2. 내 진짜 키값은 Streamlit의 안전한 금고(secrets)에서 불러오기!
+app_key = st.secrets["APP_KEY"]
+app_secret = st.secrets["APP_SECRET"]
 
 
 # ----------------------------------------------------
