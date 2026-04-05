@@ -21,29 +21,37 @@ app_secret = st.secrets["APP_SECRET"]
 # ----------------------------------------------------
 @st.cache_data(ttl=3000)
 def get_access_token():
-    # 💡 [핵심 해결 2] 8080 포트는 token 이 아니라 tokenP 를 사용합니다!
     url = f"{host_url}/oauth2/tokenP"
     
-    headers = {
-        "Content-Type": "application/json;charset=UTF-8",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
-    # 💡 secretkey 가 아니라 appsecret 으로 요청해야 합니다!
-    data = {
+    # 💡 [핵심 해결] 위장 헤더 싹 다 지우고, 사용자님 성공 코드와 똑같이 심플하게!
+    body = {
         "grant_type": "client_credentials", 
         "appkey": app_key, 
         "appsecret": app_secret
     }
     
-    response = requests.post(url, headers=headers, json=data)
-    
-    if response.status_code != 200:
-        return None # 실패 시 None 반환
+    try:
+        # 💡 timeout=5 설정: 5초 안에 키움이 대답 안 하면 무한로딩 안 하고 바로 에러 뱉음!
+        response = requests.post(url, json=body, timeout=5)
         
-    res_json = response.json()
-    # 💡 응답 키도 token 이 아니라 access_token 입니다!
-    return res_json.get('access_token')
-
+        if response.status_code != 200:
+            st.error(f"🚨 토큰 서버 거절! 상태 코드: {response.status_code}")
+            return None
+            
+        data = response.json()
+        if "access_token" in data:
+            return data["access_token"]
+        else:
+            st.error(f"🚨 토큰 발급 실패 (데이터 이상): {data}")
+            return None
+            
+    except requests.exceptions.Timeout:
+        st.error("🚨 5초 초과! 키움 서버(8080포트)가 응답을 주지 않고 무시했습니다. (Timeout)")
+        return None
+    except Exception as e:
+        st.error(f"🚨 서버 접속 중 오류 발생: {e}")
+        return None
+        
 @st.cache_data(ttl=86400) 
 def get_broker_list(token):
     url = f"{host_url}/api/dostk/stkinfo"
