@@ -10,7 +10,7 @@ import numpy as np
 # ----------------------------------------------------
 # 💡 [핵심 해결 1] URL을 반드시 '실전투자(api)'로 변경해야 수급 데이터가 나옵니다!
 # ----------------------------------------------------
-host_url = "https://api.kiwoom.com" 
+HOST_URL = "https://openapi.kiwoom.com:8080"
 
 # 2. 내 진짜 키값은 Streamlit의 안전한 금고(secrets)에서 불러오기!
 app_key = st.secrets["APP_KEY"]
