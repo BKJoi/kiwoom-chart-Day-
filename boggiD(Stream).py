@@ -172,7 +172,7 @@ if auth_token and len(stock_number) == 6:
                 df_buy = pd.DataFrame(buy_list).set_index('dt')
                 df_sell = pd.DataFrame(sell_list).set_index('dt')
                 def get_investor_sum(src_df, field):
-                    num_df = src_df.applymap(clean_val)
+                    num_df = src_df.map(clean_val)
                     if field == 'orgn':
                         subs = ["fnnc_invt", "insrnc", "invtrt", "etc_fnnc", "bank", "penfnd_etc", "samo_fund", "natn"]
                         return num_df[subs].sum(axis=1).combine(num_df['orgn'], max)
