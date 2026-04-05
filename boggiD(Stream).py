@@ -7,13 +7,14 @@ from datetime import datetime
 import re
 import numpy as np
 
-# 1. URL은 숨길 필요가 없으므로 직접 입력 (모의투자 또는 실투자 URL)
-host_url = "https://mockapi.kiwoom.com" # 또는 모의투자 URL
+# ----------------------------------------------------
+# 💡 [핵심 해결 1] URL을 반드시 '실전투자(api)'로 변경해야 수급 데이터가 나옵니다!
+# ----------------------------------------------------
+host_url = "https://api.kiwoom.com" 
 
 # 2. 내 진짜 키값은 Streamlit의 안전한 금고(secrets)에서 불러오기!
 app_key = st.secrets["APP_KEY"]
 app_secret = st.secrets["APP_SECRET"]
-
 
 # ----------------------------------------------------
 # 1. 인증 및 데이터 수집 함수 (User-Agent 위장 추가)
@@ -22,7 +23,6 @@ app_secret = st.secrets["APP_SECRET"]
 def get_access_token():
     url = f"{host_url}/oauth2/token"
     
-    # 💡 [핵심] 일반 PC의 크롬 브라우저인 것처럼 위장하는 코드 추가
     headers = {
         "Content-Type": "application/json;charset=UTF-8",
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -88,6 +88,9 @@ auth_token = get_access_token()
 with st.sidebar:
     st.header("⚙️ 설정")
     stock_number = st.text_input("종목코드", value="005930")
+    
+    # 💡 주말에 조회하면 데이터가 안 나올 수 있으므로, 평일 날짜를 선택하도록 안내
+    st.caption("※ 주말/휴일 선택 시 데이터가 누락될 수 있습니다.")
     selected_date = st.date_input("기준 날짜", datetime.now())
     target_date_str = selected_date.strftime('%Y%m%d')
     
@@ -164,7 +167,14 @@ if auth_token and len(stock_number) == 6:
             df['Brk2_Cum'] = df['Brk2_Net'].cumsum()
             df['Brk2_Total_Vol'] = df['Brk2_Buy'] + df['Brk2_Sell']
 
-            buy_list, sell_list = res_buy.get('stk_invsr_orgn', []), res_sell.get('stk_invsr_orgn', [])
+            buy_list = res_buy.get('stk_invsr_orgn', [])
+            sell_list = res_sell.get('stk_invsr_orgn', [])
+            
+            # 💡 [핵심 해결 2] 데이터가 안 올 경우 원인을 파악할 수 있도록 경고 메시지 출력
+            if not buy_list:
+                st.warning(f"⚠️ 5층(투자자 수급) 데이터를 키움 서버에서 주지 않았습니다! (서버 메시지: {res_buy.get('return_msg', '데이터 없음')})")
+                st.info("해결 방법: 주말/휴일 대신 평일(예: 금요일) 날짜를 사이드바에서 선택해 보세요.")
+
             df['Inv_Buy'] = 0; df['Inv_Sell'] = 0; df['Inv_Net'] = 0
             df['Ind_Buy'] = 0; df['Ind_Sell'] = 0; df['Ind_Net'] = 0
             
