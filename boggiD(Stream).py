@@ -18,27 +18,31 @@ except KeyError:
     st.error("⚠️ Streamlit Cloud의 [Secrets] 설정이 누락되었습니다. APP_KEY, APP_SECRET, HOST_URL을 입력해주세요.")
     st.stop()
 
+
 # ----------------------------------------------------
-# 1. 인증 및 데이터 수집 함수
+# 1. 인증 및 데이터 수집 함수 (User-Agent 위장 추가)
 # ----------------------------------------------------
 @st.cache_data(ttl=3600)
 def get_access_token():
     url = f"{host_url}/oauth2/token"
-    headers = {"Content-Type": "application/json;charset=UTF-8"}
+    
+    # 💡 [핵심] 일반 PC의 크롬 브라우저인 것처럼 위장하는 코드 추가
+    headers = {
+        "Content-Type": "application/json;charset=UTF-8",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
     data = {"grant_type": "client_credentials", "appkey": app_key, "secretkey": app_secret}
     
     response = requests.post(url, headers=headers, json=data)
     
     try:
-        # 정상적으로 JSON 응답이 왔을 경우
         res_json = response.json()
         return res_json.get('token')
     except requests.exceptions.JSONDecodeError:
-        # JSON이 아닌 에러 메세지가 왔을 경우 화면에 원인 출력
-        st.error("🚨 키움증권 서버 인증에 실패했습니다! (JSONDecodeError)")
+        st.error("🚨 키움증권 방화벽 차단 (Request Blocked)")
         st.warning(f"상태 코드 (Status Code): {response.status_code}")
-        st.info(f"키움 서버의 실제 응답 메세지: {response.text}")
-        st.stop() # 화면 실행을 여기서 멈춥니다.
+        st.info(f"실제 응답: {response.text}")
+        st.stop()
 
 @st.cache_data(ttl=86400) 
 def get_broker_list(token):
