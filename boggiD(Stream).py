@@ -5,27 +5,40 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import datetime
 import re
+import numpy as np
 
-# ⭐️ 수정 1: HOST_URL을 금고(secrets)에서 찾지 않고 직접 적어줍니다.
-app_key = st.secrets["APP_KEY"]
-app_secret = st.secrets["APP_SECRET"]
-host_url = "https://mockapi.kiwoom.com"
+# ----------------------------------------------------
+# 🔒 보안 키 설정 (Streamlit Secrets 활용)
+# ----------------------------------------------------
+try:
+    app_key = st.secrets["APP_KEY"]
+    app_secret = st.secrets["APP_SECRET"]
+    host_url = st.secrets["HOST_URL"]
+except KeyError:
+    st.error("⚠️ Streamlit Cloud의 [Secrets] 설정이 누락되었습니다. APP_KEY, APP_SECRET, HOST_URL을 입력해주세요.")
+    st.stop()
 
+# ----------------------------------------------------
 # 1. 인증 및 데이터 수집 함수
+# ----------------------------------------------------
 @st.cache_data(ttl=3600)
 def get_access_token():
     url = f"{host_url}/oauth2/token"
     headers = {"Content-Type": "application/json;charset=UTF-8"}
     data = {"grant_type": "client_credentials", "appkey": app_key, "secretkey": app_secret}
-    # ⭐️ .get('token')을 빼고 전체 결과를 가져옵니다.
-    return requests.post(url, headers=headers, json=data).json()
+    return requests.post(url, headers=headers, json=data).json().get('token')
 
 @st.cache_data(ttl=86400) 
 def get_broker_list(token):
     url = f"{host_url}/api/dostk/stkinfo"
     headers = {"Content-Type": "application/json;charset=UTF-8", "api-id": "ka10102", "authorization": f"Bearer {token}"}
     res = requests.post(url, headers=headers, json={})
-    return res.json()
+    data = res.json()
+    broker_dict = {}
+    if "list" in data:
+        for item in data["list"]: 
+            broker_dict[f"{item['name']}({item['code']})"] = item["code"]
+    return broker_dict
 
 def get_daily_chart(token, stock_code, target_date):
     url = f"{host_url}/api/dostk/chart"
@@ -55,17 +68,10 @@ investor_mapping = {
 # ----------------------------------------------------
 # 2. 메인 실행부
 # ----------------------------------------------------
-st.set_page_config(page_title="수급 마스터 v9.7", layout="wide")
-st.title("📊 주체별 수급 분석 (클라우드 완벽 패치)")
+st.set_page_config(page_title="수급 마스터 Web", layout="wide")
+st.title("📊 창구/주체별 매매강도 대시보드 (클라우드 배포판)")
 
-# ⭐️ 토큰 발급 결과를 뜯어보고, 실패하면 에러를 띄웁니다.
-token_response = get_access_token()
-auth_token = token_response.get('token')
-
-if not auth_token:
-    st.error("🚨 키움증권에서 접속(토큰 발급)을 거절했습니다! 아래 사유를 확인해주세요.")
-    st.json(token_response) # 여기에 거절 사유가 뜹니다!
-
+auth_token = get_access_token()
 
 with st.sidebar:
     st.header("⚙️ 설정")
@@ -74,27 +80,26 @@ with st.sidebar:
     target_date_str = selected_date.strftime('%Y%m%d')
     
     if auth_token:
-        broker_data_raw = get_broker_list(auth_token)
-        broker_dict = {}
-        if "list" in broker_data_raw:
-            for item in broker_data_raw["list"]: 
-                broker_dict[f"{item['name']}({item['code']})"] = item["code"]
-        else:
-            st.error("🚨 창구 목록을 불러오지 못했습니다. 아래 메시지를 확인하세요.")
-            st.json(broker_data_raw)
-
-        broker_names = sorted(list(broker_dict.keys())) if broker_dict else ["데이터없음"]
-        def_brk_idx = next((i for i, n in enumerate(broker_names) if "키움증권" in n), 0) if broker_dict else 0
-        selected_broker_name = st.selectbox("🔎 창구 선택 (3층)", broker_names, index=def_brk_idx)
-        target_broker_code = broker_dict.get(selected_broker_name, "")
+        broker_dict = get_broker_list(auth_token)
+        broker_names = sorted(list(broker_dict.keys()))
+        
+        def_brk1_idx = next((i for i, n in enumerate(broker_names) if "키움증권" in n), 0)
+        selected_broker1_name = st.selectbox("🔎 창구 1 선택", broker_names, index=def_brk1_idx)
+        target_broker1_code = broker_dict[selected_broker1_name]
+        
+        def_brk2_idx = next((i for i, n in enumerate(broker_names) if "신한투자증권" in n), 0)
+        selected_broker2_name = st.selectbox("🔎 창구 2 선택 (타겟 주포)", broker_names, index=def_brk2_idx)
+        target_broker2_code = broker_dict[selected_broker2_name]
         
         investor_names = sorted(list(investor_mapping.keys()))
         def_inv_idx = next((i for i, n in enumerate(investor_names) if "기관계" == n), 0)
-        selected_investor_name = st.selectbox("🔎 투자자 선택 (4층)", investor_names, index=def_inv_idx)
+        selected_investor_name = st.selectbox("🔎 투자자 선택 (비교용)", investor_names, index=def_inv_idx)
         target_investor_field = investor_mapping[selected_investor_name]
+        
+        corr_window = st.number_input("⏱️ 롤링 분석 기간 (일)", min_value=3, max_value=60, value=20)
 
-if auth_token and len(stock_number) == 6 and target_broker_code:
-    with st.spinner("데이터 요청 중..."):
+if auth_token and len(stock_number) == 6:
+    with st.spinner("데이터 동기화 및 차트 생성 중..."):
         daily_res = get_daily_chart(auth_token, stock_number, target_date_str)
         daily_list = daily_res.get('stk_dt_pole_chart_qry', [])
 
@@ -107,43 +112,50 @@ if auth_token and len(stock_number) == 6 and target_broker_code:
                 match = re.search(r'-?\d+', s)
                 return int(match.group()) if match else 0
 
-            # ⭐️ 수정 2: 파이썬 최신 버전 문법에 맞게 r'(\d{8})' 로 변경하여 경고 메시지 제거
             df['key'] = df['dt'].astype(str).str.extract(r'(\d{8})')[0]
-            df = df.sort_values('key').tail(100).reset_index(drop=True)
+            df = df.sort_values('key').reset_index(drop=True)
             
             df['open'] = df['open_pric'].apply(clean_val)
             df['high'] = df['high_pric'].apply(clean_val)
             df['low'] = df['low_pric'].apply(clean_val)
             df['close'] = df['cur_prc'].apply(clean_val)
-            df['volume'] = df['trde_qty'].apply(clean_val) 
+            df['volume'] = df['trde_qty'].apply(clean_val)
 
             for ma, d in zip(['MA5','MA20','MA60'], [5,20,60]):
                 df[ma] = df['close'].rolling(window=d).mean()
 
-            broker_res = get_daily_broker_data(auth_token, stock_number, df['key'].min(), df['key'].max(), target_broker_code)
+            brk1_res = get_daily_broker_data(auth_token, stock_number, df['key'].min(), df['key'].max(), target_broker1_code)
+            brk2_res = get_daily_broker_data(auth_token, stock_number, df['key'].min(), df['key'].max(), target_broker2_code)
             res_buy = get_investor_data_ka10059(auth_token, stock_number, target_date_str, "1")
             res_sell = get_investor_data_ka10059(auth_token, stock_number, target_date_str, "2")
             
-            buy_list = res_buy.get('stk_invsr_orgn', [])
-            sell_list = res_sell.get('stk_invsr_orgn', [])
+            def get_brk_df(res):
+                items = res.get('sec_stk_trde_trend', [])
+                if not items: return pd.DataFrame(columns=['key', 'buy_n', 'sell_n', 'net_n'])
+                t = pd.DataFrame(items)
+                t['key'] = t['dt'].astype(str).str.extract(r'(\d{8})')[0]
+                t['buy_n'] = t['buy_qty'].apply(clean_val)
+                t['sell_n'] = t['sell_qty'].apply(clean_val)
+                t['net_n'] = t['netprps_qty'].apply(clean_val)
+                return t.groupby('key').agg({'buy_n':'sum', 'sell_n':'sum', 'net_n':'sum'}).reset_index()
 
-            df['Brk_Buy'] = 0; df['Brk_Sell'] = 0; df['Brk_Net'] = 0
-            broker_items = broker_res.get('sec_stk_trde_trend', [])
-            if broker_items:
-                df_b = pd.DataFrame(broker_items)
-                
-                # ⭐️ 수정 2: 여기도 동일하게 r 추가
-                df_b['key'] = df_b['dt'].astype(str).str.extract(r'(\d{8})')[0]
-                
-                df_b['buy_n'] = df_b['buy_qty'].apply(clean_val)
-                df_b['sell_n'] = df_b['sell_qty'].apply(clean_val)
-                df_b['net_n'] = df_b['netprps_qty'].apply(clean_val)
-                g_b = df_b.groupby('key').agg({'buy_n':'sum', 'sell_n':'sum', 'net_n':'sum'})
-                df['Brk_Buy'] = df['key'].map(g_b['buy_n']).fillna(0).abs()
-                df['Brk_Sell'] = df['key'].map(g_b['sell_n']).fillna(0).abs()
-                df['Brk_Net'] = df['key'].map(g_b['net_n']).fillna(0)
+            df_b1 = get_brk_df(brk1_res)
+            df['Brk1_Buy'] = df['key'].map(df_b1.set_index('key')['buy_n']).fillna(0).abs()
+            df['Brk1_Sell'] = df['key'].map(df_b1.set_index('key')['sell_n']).fillna(0).abs()
+            df['Brk1_Net'] = df['key'].map(df_b1.set_index('key')['net_n']).fillna(0)
+            df['Brk1_Cum'] = df['Brk1_Net'].cumsum()
 
+            df_b2 = get_brk_df(brk2_res)
+            df['Brk2_Buy'] = df['key'].map(df_b2.set_index('key')['buy_n']).fillna(0).abs()
+            df['Brk2_Sell'] = df['key'].map(df_b2.set_index('key')['sell_n']).fillna(0).abs()
+            df['Brk2_Net'] = df['key'].map(df_b2.set_index('key')['net_n']).fillna(0)
+            df['Brk2_Cum'] = df['Brk2_Net'].cumsum()
+            df['Brk2_Total_Vol'] = df['Brk2_Buy'] + df['Brk2_Sell']
+
+            buy_list, sell_list = res_buy.get('stk_invsr_orgn', []), res_sell.get('stk_invsr_orgn', [])
             df['Inv_Buy'] = 0; df['Inv_Sell'] = 0; df['Inv_Net'] = 0
+            df['Ind_Buy'] = 0; df['Ind_Sell'] = 0; df['Ind_Net'] = 0
+            
             if buy_list and sell_list:
                 df_buy = pd.DataFrame(buy_list).set_index('dt')
                 df_sell = pd.DataFrame(sell_list).set_index('dt')
@@ -151,23 +163,59 @@ if auth_token and len(stock_number) == 6 and target_broker_code:
                     num_df = src_df.applymap(clean_val)
                     if field == 'orgn':
                         subs = ["fnnc_invt", "insrnc", "invtrt", "etc_fnnc", "bank", "penfnd_etc", "samo_fund", "natn"]
-                        sums = num_df[subs].sum(axis=1)
-                        orgns = num_df['orgn']
-                        return pd.Series([max(s, o) for s, o in zip(sums, orgns)], index=src_df.index)
+                        return num_df[subs].sum(axis=1).combine(num_df['orgn'], max)
                     return num_df[field]
+                
                 df['Inv_Buy'] = df['key'].map(get_investor_sum(df_buy, target_investor_field)).fillna(0).abs()
                 df['Inv_Sell'] = df['key'].map(get_investor_sum(df_sell, target_investor_field)).fillna(0).abs()
                 df['Inv_Net'] = df['Inv_Buy'] - df['Inv_Sell']
+                
+                df['Ind_Buy'] = df['key'].map(get_investor_sum(df_buy, 'ind_invsr')).fillna(0).abs()
+                df['Ind_Sell'] = df['key'].map(get_investor_sum(df_sell, 'ind_invsr')).fillna(0).abs()
+                df['Ind_Net'] = df['Ind_Buy'] - df['Ind_Sell']
 
-            df['Brk_Cum'] = df['Brk_Net'].cumsum(); df['Inv_Cum'] = df['Inv_Net'].cumsum()
+            df['Inv_Cum'] = df['Inv_Net'].cumsum()
+            df['Inv_Total_Vol'] = df['Inv_Buy'] + df['Inv_Sell']
 
+            # -------------------------------------------------------
+            # ⭐️ 극단값(Outlier) 제한 (Clipping)
+            # -------------------------------------------------------
+            clip_limit = 50 
+            
+            df['Brk2_Intensity'] = ((df['Brk2_Net'] / df['Brk2_Total_Vol'].replace(0, np.nan)).fillna(0) * 100).clip(lower=-clip_limit, upper=clip_limit)
+            df['Inv_Intensity'] = ((df['Inv_Net'] / df['Inv_Total_Vol'].replace(0, np.nan)).fillna(0) * 100).clip(lower=-clip_limit, upper=clip_limit)
+
+            df['Corr_Inv'] = df['Ind_Net'].rolling(window=corr_window).corr(df['Inv_Net']).fillna(0)
+            df['Corr_Brk'] = df['Brk1_Net'].rolling(window=corr_window).corr(df['Brk2_Net']).fillna(0)
+            
+            df = df.tail(100).reset_index(drop=True)
             x_labels = df['key'].apply(lambda x: f"{x[2:4]}/{x[4:6]}/{x[6:]}")
 
-            fig = make_subplots(rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.3, 0.1, 0.3, 0.3],
-                subplot_titles=("가격 및 이동평균선", "전체 거래량", f"{selected_broker_name} 수급 활동", f"{selected_investor_name} 수급 활동"),
-                specs=[[{"secondary_y": False}], [{"secondary_y": False}], [{"secondary_y": True}], [{"secondary_y": True}]])
+            # -------------------------------------------------------
+            # ⭐️ 9단 분할 차트 생성 
+            # -------------------------------------------------------
+            fig = make_subplots(
+                rows=9, cols=1, shared_xaxes=True, vertical_spacing=0.03, 
+                row_heights=[0.14, 0.06, 0.08, 0.08, 0.08, 0.08, 0.08, 0.2, 0.2], 
+                subplot_titles=(
+                    "1. 가격 및 이동평균선", "2. 전체 거래량", 
+                    f"3. [{selected_broker1_name}] 수급 활동", f"4. [{selected_broker2_name}] 수급 활동", f"5. [{selected_investor_name}] 수급 활동", 
+                    f"🔗 6. [개인투자자] - [{selected_investor_name}] 매매 상관성",
+                    f"🔗 7. [{selected_broker1_name}] - [{selected_broker2_name}] 매매 상관성",
+                    f"🔥 8. [{selected_broker2_name}] 순매수 강도 (%) - (극단값 ±{clip_limit}% 커트)",
+                    f"🔥 9. [{selected_investor_name}] 순매수 강도 (%) - (극단값 ±{clip_limit}% 커트)"
+                ),
+                specs=[[{"secondary_y": False}], [{"secondary_y": False}], 
+                       [{"secondary_y": True}], [{"secondary_y": True}], [{"secondary_y": True}], 
+                       [{"secondary_y": False}], [{"secondary_y": False}], 
+                       [{"secondary_y": False}], [{"secondary_y": False}]]
+            )
             
-            fig.add_trace(go.Candlestick(x=x_labels, open=df['open'], high=df['high'], low=df['low'], close=df['close'], increasing_line_color='#ff4d4d', increasing_fillcolor='#ff4d4d', decreasing_line_color='#0066ff', decreasing_fillcolor='#0066ff', name="가격"), row=1, col=1)
+            fig.add_trace(go.Candlestick(
+                x=x_labels, open=df['open'], high=df['high'], low=df['low'], close=df['close'], 
+                increasing_line_color='#ff4d4d', increasing_fillcolor='#ff4d4d', 
+                decreasing_line_color='#0066ff', decreasing_fillcolor='#0066ff', name="가격"
+            ), row=1, col=1)
             for ma, color in zip(['MA5', 'MA20', 'MA60'], ['#ff4d4d', '#0066ff', '#00cc44']):
                 fig.add_trace(go.Scatter(x=x_labels, y=df[ma], line=dict(color=color, width=1.2), name=ma), row=1, col=1)
             
@@ -179,14 +227,33 @@ if auth_token and len(stock_number) == 6 and target_broker_code:
                 fig.add_trace(go.Bar(x=x_labels, y=-sell, marker_color='#0066ff', opacity=0.7, name=f"{name}매도"), row=row, col=1, secondary_y=False)
                 fig.add_trace(go.Scatter(x=x_labels, y=cum, line=dict(color='black', width=2), name=f"{name}누적"), row=row, col=1, secondary_y=True)
 
-            add_layer(fig, 3, df['Brk_Buy'], df['Brk_Sell'], df['Brk_Cum'], "창구")
-            add_layer(fig, 4, df['Inv_Buy'], df['Inv_Sell'], df['Inv_Cum'], f"{selected_investor_name}")
+            add_layer(fig, 3, df['Brk1_Buy'], df['Brk1_Sell'], df['Brk1_Cum'], "창구1")
+            add_layer(fig, 4, df['Brk2_Buy'], df['Brk2_Sell'], df['Brk2_Cum'], "창구2")
+            add_layer(fig, 5, df['Inv_Buy'], df['Inv_Sell'], df['Inv_Cum'], f"{selected_investor_name}")
+
+            fig.add_trace(go.Bar(x=x_labels, y=df['Corr_Inv'], marker_color=['#ff4d4d' if c > 0 else '#0066ff' for c in df['Corr_Inv']], opacity=0.8), row=6, col=1)
+            fig.add_trace(go.Bar(x=x_labels, y=df['Corr_Brk'], marker_color=['#ff4d4d' if c > 0 else '#0066ff' for c in df['Corr_Brk']], opacity=0.8), row=7, col=1)
+
+            # 8층 (창구2 매매강도 - 꺾은선 + 영역)
+            fig.add_trace(go.Scatter(
+                x=x_labels, y=df['Brk2_Intensity'], 
+                mode='lines+markers', line=dict(color='#ff9933', width=2), marker=dict(size=4), 
+                fill='tozeroy', fillcolor='rgba(255, 153, 51, 0.2)', name="창구강도"
+            ), row=8, col=1)
+            fig.add_hline(y=0, line_dash="solid", line_color="black", opacity=0.5, row=8, col=1)
+
+            # 9층 (투자자 매매강도 - 꺾은선 + 영역)
+            fig.add_trace(go.Scatter(
+                x=x_labels, y=df['Inv_Intensity'], 
+                mode='lines+markers', line=dict(color='#00cc66', width=2), marker=dict(size=4), 
+                fill='tozeroy', fillcolor='rgba(0, 204, 102, 0.2)', name="투자자강도"
+            ), row=9, col=1)
+            fig.add_hline(y=0, line_dash="solid", line_color="black", opacity=0.5, row=9, col=1)
+
+            fig.update_yaxes(range=[-clip_limit-5, clip_limit+5], row=8, col=1)
+            fig.update_yaxes(range=[-clip_limit-5, clip_limit+5], row=9, col=1)
 
             fig.update_xaxes(type='category', tickangle=-45, nticks=20, showgrid=True)
-            fig.update_layout(height=1100, template='plotly_white', barmode='relative', xaxis_rangeslider_visible=False, showlegend=False)
+            fig.update_layout(height=2600, template='plotly_white', barmode='relative', xaxis_rangeslider_visible=False, showlegend=False)
             
             st.plotly_chart(fig, use_container_width=True)
-        else:
-            # 일봉 데이터를 아예 못 받았을 때의 메시지 출력
-            st.error("🚨 서버에서 차트 데이터를 주지 않았습니다. 아래의 거절 사유를 확인해 주세요.")
-            st.json(daily_res)
